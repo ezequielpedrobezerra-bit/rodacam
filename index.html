@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RodaCam">
+<meta name="theme-color" content="#0a0c10">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" href="icon.svg">
+<title>RodaCam</title>
+<style>
+  /* HUD de dashcam: tema escuro único (deliberado), seguro para carro/sol */
+  :root{
+    --bg:#0a0c10; --panel:#141821; --panel2:#1c2230; --fg:#eef2f8; --muted:#9aa6bb;
+    --line:#2a3242; --accent:#3ea6ff; --rec:#ff3b30; --ok:#30d158; --warn:#ffd60a;
+    --r:14px; --gap:12px;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    overscroll-behavior:none; -webkit-user-select:none; user-select:none;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  button{font:inherit; color:inherit; cursor:pointer}
+  .tabnums{font-variant-numeric:tabular-nums}
+
+  /* ---- Visor ---- */
+  #view{position:fixed; inset:0; display:flex; flex-direction:column}
+  #stage{position:relative; flex:1; background:#000; overflow:hidden}
+  #cam{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#000}
+
+  /* HUD por cima do vídeo */
+  #hud{position:absolute; inset:0; pointer-events:none; display:flex; flex-direction:column;
+       justify-content:space-between; padding:calc(env(safe-area-inset-top) + 10px) 14px 12px}
+  .hud-row{display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
+  .badge{background:rgba(8,10,14,.6); backdrop-filter:blur(6px); border:1px solid var(--line);
+         border-radius:999px; padding:6px 12px; font-size:13px; display:inline-flex; align-items:center; gap:7px}
+  #recdot{width:10px; height:10px; border-radius:50%; background:var(--muted)}
+  body.rec #recdot{background:var(--rec); animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  #clock{font-size:15px}
+  #speed{font-size:34px; line-height:1; font-weight:700}
+  #speed small{font-size:13px; font-weight:500; color:var(--muted)}
+  #gps{font-size:12px; color:var(--muted)}
+  .hud-bl{display:flex; flex-direction:column; gap:4px; align-items:flex-start}
+  .hud-br{display:flex; flex-direction:column; gap:4px; align-items:flex-end; text-align:right}
+
+  /* Barra de controles */
+  #bar{display:flex; align-items:center; justify-content:space-around; gap:8px;
+       padding:12px 14px calc(env(safe-area-inset-bottom) + 14px); background:var(--bg); border-top:1px solid var(--line)}
+  .ctrl{pointer-events:auto; background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+        padding:10px 6px; min-width:66px; display:flex; flex-direction:column; align-items:center; gap:4px;
+        font-size:11px; color:var(--muted)}
+  .ctrl svg{width:24px; height:24px; fill:none; stroke:var(--fg); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round}
+  #recBtn{min-width:150px; background:var(--rec); border-color:var(--rec); color:#fff; font-size:15px; font-weight:600;
+          flex-direction:row; padding:14px}
+  #recBtn svg{stroke:#fff}
+  body.rec #recBtn{background:var(--panel2); border-color:var(--line); color:var(--fg)}
+  body.rec #recBtn svg{stroke:var(--fg)}
+
+  /* ---- Tela escura ---- */
+  #dark{position:fixed; inset:0; background:#000; z-index:40; display:none; flex-direction:column;
+        align-items:center; justify-content:center; gap:10px; color:#2d3340}
+  #dark.on{display:flex}
+  #dark .d-clock{font-size:40px; font-weight:700; letter-spacing:1px}
+  #dark .d-rec{display:flex; align-items:center; gap:8px; font-size:14px}
+  #dark .d-dot{width:9px;height:9px;border-radius:50%;background:#5a1512}
+  body.rec #dark .d-dot{background:var(--rec); animation:pulse 1.6s infinite}
+  #dark .d-hint{position:absolute; bottom:calc(env(safe-area-inset-bottom) + 20px); font-size:12px; color:#20252e}
+
+  /* ---- Painéis (ajustes / clipes) ---- */
+  .sheet{position:fixed; inset:0; z-index:50; background:var(--bg); display:none; flex-direction:column;
+         padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  .sheet.on{display:flex}
+  .sheet header{display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line)}
+  .sheet header h2{margin:0; font-size:17px}
+  .sheet .body{flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:14px}
+  .x{background:none; border:none; color:var(--accent); font-size:16px; padding:6px}
+  .field{display:flex; flex-direction:column; gap:6px}
+  .field label{font-size:13px; color:var(--muted)}
+  select,input[type=number]{background:var(--panel); color:var(--fg); border:1px solid var(--line);
+        border-radius:10px; padding:11px; font:inherit; width:100%}
+  .switch{display:flex; align-items:center; justify-content:space-between; background:var(--panel);
+          border:1px solid var(--line); border-radius:10px; padding:12px}
+  .switch input{width:44px; height:26px; appearance:none; background:var(--line); border-radius:999px; position:relative; transition:.2s}
+  .switch input:checked{background:var(--ok)}
+  .switch input::after{content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; background:#fff; border-radius:50%; transition:.2s}
+  .switch input:checked::after{left:21px}
+  .note{font-size:12px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:11px}
+  .note b{color:var(--warn)}
+
+  /* clipes */
+  #clipList{display:flex; flex-direction:column; gap:10px}
+  .clip{display:flex; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; align-items:center}
+  .clip .meta{flex:1; min-width:0}
+  .clip .meta .t{font-size:14px}
+  .clip .meta .s{font-size:12px; color:var(--muted)}
+  .clip .acts{display:flex; gap:6px}
+  .clip .acts button{background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font-size:12px}
+  .clip.prot{border-color:var(--warn)}
+  .empty{color:var(--muted); text-align:center; padding:40px 10px}
+  .bignote{font-size:13px; color:var(--muted); text-align:center; padding:8px 0}
+
+  /* overlay de permissão / início */
+  #gate{position:fixed; inset:0; z-index:60; background:var(--bg); display:flex; flex-direction:column;
+        align-items:center; justify-content:center; gap:16px; padding:24px; text-align:center}
+  #gate h1{margin:0; font-size:26px; letter-spacing:.5px}
+  #gate p{margin:0; color:var(--muted); max-width:340px}
+  #gate .go{background:var(--accent); color:#001; border:none; border-radius:14px; padding:15px 28px; font-size:16px; font-weight:700}
+  #gate .mini{font-size:12px; color:var(--muted); max-width:340px}
+  .hide{display:none!important}
+  .toast{position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 90px); transform:translateX(-50%);
+         background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:10px 16px; font-size:13px;
+         z-index:70; opacity:0; transition:.25s; pointer-events:none}
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- Porta de entrada: pede permissão num gesto do usuário -->
+<div id="gate">
+  <h1>RodaCam</h1>
+  <p>Dashcam para o seu iPhone. Grava em loop, com relógio, velocidade e GPS.</p>
+  <button class="go" id="gateGo">Ativar câmera</button>
+  <p class="mini" id="gateMsg">Toque para permitir o acesso à câmera. Para filmar por muito tempo, mantenha o iPhone na tomada do carro.</p>
+</div>
+
+<!-- Visor principal -->
+<div id="view" class="hide">
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <div id="hud">
+      <div class="hud-row">
+        <div class="hud-bl">
+          <span class="badge"><span id="recdot"></span><span id="recLabel">Parado</span></span>
+          <span class="badge" id="storeBadge">—</span>
+        </div>
+        <div class="hud-br">
+          <span class="badge tabnums" id="clock">--:--:--</span>
+          <span class="badge" id="res">—</span>
+        </div>
+      </div>
+      <div class="hud-row" style="align-items:flex-end">
+        <div class="hud-bl">
+          <div id="speed" class="tabnums">0<small> km/h</small></div>
+          <div id="gps">GPS: aguardando…</div>
+        </div>
+        <div class="hud-br">
+          <span class="badge tabnums" id="segInfo">seg —</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="bar">
+    <button class="ctrl" id="clipsBtn">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M17 9l4-2v10l-4-2"/></svg>
+      Clipes
+    </button>
+    <button id="recBtn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>
+      <span id="recBtnTxt">Gravar</span>
+    </button>
+    <button class="ctrl" id="darkBtn">
+      <svg viewBox="0 0 24 24"><path d="M21 12.8A8 8 0 1 1 11.2 3a6 6 0 0 0 9.8 9.8z"/></svg>
+      Tela escura
+    </button>
+    <button class="ctrl" id="setBtn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.3-2.5H9.4L9 4.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4L5 9.9a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.5h4.2l.3-2.5a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>
+      Ajustes
+    </button>
+  </div>
+</div>
+
+<!-- Tela escura -->
+<div id="dark">
+  <div class="d-clock tabnums" id="dClock">--:--</div>
+  <div class="d-rec"><span class="d-dot"></span><span id="dRec">parado</span></div>
+  <div class="d-hint">toque para acordar a tela • gravação segue só com a tela ligada</div>
+</div>
+
+<!-- Ajustes -->
+<div class="sheet" id="setSheet">
+  <header><h2>Ajustes</h2><button class="x" data-close="setSheet">Concluído</button></header>
+  <div class="body">
+    <div class="field">
+      <label>Duração de cada segmento</label>
+      <select id="segSec">
+        <option value="60">1 minuto</option>
+        <option value="180" selected>3 minutos</option>
+        <option value="300">5 minutos</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Guardar no máximo (apaga os mais antigos)</label>
+      <select id="maxMB">
+        <option value="2000">2 GB</option>
+        <option value="5000" selected>5 GB</option>
+        <option value="10000">10 GB</option>
+        <option value="20000">20 GB</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Qualidade</label>
+      <select id="quality">
+        <option value="720">720p (mais leve, menos calor)</option>
+        <option value="1080" selected>1080p</option>
+      </select>
+    </div>
+    <div class="switch"><span>Gravar áudio (microfone)</span><input type="checkbox" id="mic"></div>
+    <div class="switch"><span>Manter a tela acesa durante a gravação</span><input type="checkbox" id="wake" checked></div>
+    <div class="note" id="estNote">—</div>
+    <div class="note"><b>Limite do iPhone:</b> nenhum app grava com a tela desligada ou em segundo plano — o iOS corta a câmera. A "Tela escura" deixa a tela preta mas acesa, em primeiro plano. Para gravar muito tempo, use energia do carro e, de preferência, o <b>Acesso Guiado</b> (Ajustes → Acessibilidade) para travar no app.</div>
+    <div class="note">Os clipes ficam só neste iPhone, dentro do Safari. Limpar os dados do site apaga tudo. Para guardar um clipe importante, use <b>Salvar/Compartilhar</b> na aba Clipes.</div>
+  </div>
+</div>
+
+<!-- Clipes -->
+<div class="sheet" id="clipSheet">
+  <header><h2>Clipes</h2><button class="x" data-close="clipSheet">Concluído</button></header>
+  <div class="body">
+    <div class="bignote" id="clipSummary">—</div>
+    <div id="clipList"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ============ retenção (função pura, testável) ============ */
+// Dado os clipes (ordenados por ts asc) e o limite em bytes, devolve os ids a apagar
+// (mais antigos primeiro, pulando os protegidos) até caber no limite.
+function clipsToEvict(clips, maxBytes){
+  let total = clips.reduce((a,c)=>a + (c.size||0), 0);
+  const evict = [];
+  for(const c of clips){               // clips já em ordem crescente de ts
+    if(total <= maxBytes) break;
+    if(c.protected) continue;
+    evict.push(c.id);
+    total -= (c.size||0);
+  }
+  return evict;
+}
+
+/* self-test: abra a página com ?selftest */
+if(location.search.includes("selftest")){
+  const t=[
+    [clipsToEvict([],1000), []],
+    [clipsToEvict([{id:1,ts:1,size:600},{id:2,ts:2,size:600}],1000), [1]],
+    [clipsToEvict([{id:1,ts:1,size:600,protected:true},{id:2,ts:2,size:600}],1000), [2]],
+    [clipsToEvict([{id:1,ts:1,size:400},{id:2,ts:2,size:400}],1000), []],
+  ];
+  let ok=true;
+  t.forEach(([got,exp],i)=>{ if(JSON.stringify(got)!==JSON.stringify(exp)){ok=false; console.error("selftest",i,"got",got,"exp",exp);} });
+  document.title = ok ? "RodaCam selftest OK" : "RodaCam selftest FALHOU";
+  console.log(ok?"SELFTEST OK":"SELFTEST FALHOU");
+}
+
+/* ============ estado ============ */
+const $ = s => document.querySelector(s);
+const S = loadSettings();
+let stream=null, recorder=null, mime="", recording=false;
+let segTimer=null, clockTimer=null, wakeLock=null;
+let curTrack=[], curStart=0;
+let gps={lat:null,lon:null,spd:0,ok:false};
+let db=null;
+
+function loadSettings(){
+  let d={segSec:180,maxMB:5000,quality:1080,mic:false,wake:true};
+  try{ const s=JSON.parse(localStorage.getItem("rodacam")||"{}"); d={...d,...s}; }catch(e){}
+  return d;
+}
+function saveSettings(){ try{ localStorage.setItem("rodacam",JSON.stringify(S)); }catch(e){} }
+
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("on"),2200); }
+function fmtMB(mb){ return mb>=1000 ? (mb/1000).toFixed(mb>=10000?0:1)+" GB" : Math.round(mb)+" MB"; }
+function fmtDur(s){ s=Math.round(s); return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
+
+/* ============ IndexedDB ============ */
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open("rodacam",1);
+    r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains("clips")) d.createObjectStore("clips",{keyPath:"id"}); };
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+  });
+}
+function tx(mode){ return db.transaction("clips",mode).objectStore("clips"); }
+function putClip(c){ return new Promise((res,rej)=>{ const r=tx("readwrite").put(c); r.onsuccess=res; r.onerror=()=>rej(r.error); }); }
+function delClip(id){ return new Promise((res,rej)=>{ const r=tx("readwrite").delete(id); r.onsuccess=res; r.onerror=()=>rej(r.error); }); }
+function allClips(){ return new Promise((res,rej)=>{ const r=tx("readonly").getAll(); r.onsuccess=()=>res((r.result||[]).sort((a,b)=>a.ts-b.ts)); r.onerror=()=>rej(r.error); }); }
+
+async function enforceRetention(){
+  const clips=await allClips();
+  const ids=clipsToEvict(clips, S.maxMB*1_000_000);
+  for(const id of ids) await delClip(id);
+  return ids.length;
+}
+async function storageUsed(){ const c=await allClips(); return c.reduce((a,x)=>a+(x.size||0),0); }
+
+/* ============ câmera ============ */
+async function startCamera(){
+  const h = S.quality===720?720:1080, w = S.quality===720?1280:1920;
+  const constraints={ audio:S.mic, video:{ facingMode:{ideal:"environment"}, width:{ideal:w}, height:{ideal:h} } };
+  stream=await navigator.mediaDevices.getUserMedia(constraints);
+  const v=$("#cam"); v.srcObject=stream; await v.play().catch(()=>{});
+  const tr=stream.getVideoTracks()[0]; const st=tr.getSettings?tr.getSettings():{};
+  $("#res").textContent = (st.height?st.height+"p":S.quality+"p");
+  mime = pickMime();
+}
+function pickMime(){
+  const want=["video/mp4;codecs=h264","video/mp4","video/webm;codecs=h264","video/webm"];
+  for(const m of want){ if(window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; }
+  return "";
+}
+
+/* ============ gravação em loop por segmentos ============ */
+function startRecording(){
+  if(recording||!stream) return;
+  recording=true; document.body.classList.add("rec");
+  $("#recLabel").textContent="Gravando"; $("#recBtnTxt").textContent="Parar"; $("#dRec").textContent="gravando";
+  if(S.wake) requestWake();
+  beginSegment();
+  segTimer=setInterval(cycleSegment, S.segSec*1000);
+}
+function stopRecording(){
+  if(!recording) return;
+  recording=false; document.body.classList.remove("rec");
+  clearInterval(segTimer); segTimer=null;
+  $("#recLabel").textContent="Parado"; $("#recBtnTxt").textContent="Gravar"; $("#dRec").textContent="parado";
+  $("#segInfo").textContent="seg —";
+  if(recorder && recorder.state!=="inactive") recorder.stop();   // onstop salva o último trecho
+  releaseWake();
+}
+function beginSegment(){
+  const chunks=[]; curTrack=[]; curStart=Date.now();
+  try{ recorder=new MediaRecorder(stream, mime?{mimeType:mime, videoBitsPerSecond: S.quality===720?4_000_000:8_000_000}:undefined); }
+  catch(e){ toast("Formato de vídeo não suportado neste Safari"); stopRecording(); return; }
+  recorder.ondataavailable=e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop=async ()=>{
+    const blob=new Blob(chunks,{type:mime||"video/mp4"});
+    if(blob.size>0) await saveSegment(blob, curStart, curTrack.slice());
+  };
+  recorder.start();  // um Blob completo por segmento
+}
+function cycleSegment(){
+  if(!recording) return;
+  if(recorder && recorder.state!=="inactive") recorder.stop();  // finaliza o trecho atual…
+  beginSegment();                                                // …e começa o próximo
+}
+async function saveSegment(blob, startedAt, track){
+  const c={ id:startedAt+"-"+Math.random().toString(36).slice(2,6), ts:startedAt,
+            dur:(Date.now()-startedAt)/1000, size:blob.size, blob, track, protected:false, type:blob.type };
+  try{
+    await putClip(c);
+    const removed=await enforceRetention();
+    refreshStore();
+    if(removed) toast("Loop: "+removed+" clipe(s) antigo(s) apagado(s)");
+  }catch(e){ toast("Sem espaço para salvar o clipe"); console.error(e); }
+}
+
+/* ============ GPS ============ */
+function startGPS(){
+  if(!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(p=>{
+    gps.ok=true; gps.lat=p.coords.latitude; gps.lon=p.coords.longitude;
+    gps.spd = p.coords.speed!=null && p.coords.speed>=0 ? p.coords.speed*3.6 : 0; // m/s -> km/h
+    $("#gps").textContent = "GPS: "+gps.lat.toFixed(5)+", "+gps.lon.toFixed(5);
+    if(recording) curTrack.push({t:Date.now(), lat:gps.lat, lon:gps.lon, spd:Math.round(gps.spd)});
+  }, err=>{ $("#gps").textContent="GPS: sem sinal/permissão"; }, {enableHighAccuracy:true, maximumAge:1000, timeout:10000});
+}
+
+/* ============ wake lock ============ */
+async function requestWake(){
+  try{ if("wakeLock" in navigator){ wakeLock=await navigator.wakeLock.request("screen"); } }catch(e){}
+}
+function releaseWake(){ try{ wakeLock&&wakeLock.release(); wakeLock=null; }catch(e){} }
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible" && recording && S.wake) requestWake();
+});
+
+/* ============ relógio / HUD ============ */
+function tick(){
+  const d=new Date(), hh=d.toLocaleTimeString("pt-BR");
+  $("#clock").textContent=hh; $("#dClock").textContent=d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+  const kmh=Math.round(gps.ok?gps.spd:0);
+  $("#speed").innerHTML=kmh+'<small> km/h</small>';
+  if(recording){ const el=(Date.now()-curStart)/1000; $("#segInfo").textContent="seg "+fmtDur(el)+"/"+fmtDur(S.segSec); }
+}
+async function refreshStore(){
+  if(!db) return;
+  const used=await storageUsed();
+  $("#storeBadge").textContent=fmtMB(used/1_000_000)+" / "+fmtMB(S.maxMB);
+}
+
+/* ============ UI: painéis ============ */
+function openSheet(id){ $("#"+id).classList.add("on"); if(id==="clipSheet") renderClips(); }
+function closeSheet(id){ $("#"+id).classList.remove("on"); }
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>closeSheet(b.dataset.close));
+$("#setBtn").onclick=()=>openSheet("setSheet");
+$("#clipsBtn").onclick=()=>openSheet("clipSheet");
+$("#darkBtn").onclick=()=>$("#dark").classList.add("on");
+$("#dark").onclick=()=>$("#dark").classList.remove("on");
+$("#recBtn").onclick=()=> recording?stopRecording():startRecording();
+
+/* ajustes -> estado */
+function bindSettings(){
+  $("#segSec").value=S.segSec; $("#maxMB").value=S.maxMB; $("#quality").value=S.quality;
+  $("#mic").checked=S.mic; $("#wake").checked=S.wake; updateEst();
+  $("#segSec").onchange=e=>{S.segSec=+e.target.value; saveSettings(); updateEst();};
+  $("#maxMB").onchange=e=>{S.maxMB=+e.target.value; saveSettings(); updateEst(); enforceRetention().then(refreshStore);};
+  $("#quality").onchange=e=>{S.quality=+e.target.value; saveSettings(); updateEst(); toast("Vale no próximo início da câmera");};
+  $("#mic").onchange=e=>{S.mic=e.target.checked; saveSettings(); toast("Vale no próximo início da câmera");};
+  $("#wake").onchange=e=>{S.wake=e.target.checked; saveSettings(); if(!S.wake) releaseWake(); else if(recording) requestWake();};
+}
+function updateEst(){
+  const mbPerMin = S.quality===720 ? 30 : 60;          // ~ taxa estimada
+  const mins = Math.round(S.maxMB / mbPerMin);
+  $("#estNote").textContent = "A ~"+mbPerMin+" MB/min, "+fmtMB(S.maxMB)+" guardam cerca de "
+    + (mins>=60 ? (mins/60).toFixed(1)+" h" : mins+" min") + " de vídeo em loop.";
+}
+
+/* ============ clipes ============ */
+async function renderClips(){
+  const clips=(await allClips()).sort((a,b)=>b.ts-a.ts);
+  const used=clips.reduce((a,x)=>a+x.size,0);
+  $("#clipSummary").textContent = clips.length ? (clips.length+" clipe(s) • "+fmtMB(used/1_000_000)) : "";
+  const list=$("#clipList"); list.innerHTML="";
+  if(!clips.length){ list.innerHTML='<div class="empty">Nenhum clipe ainda.<br>Toque em Gravar no visor.</div>'; return; }
+  for(const c of clips){
+    const el=document.createElement("div");
+    el.className="clip"+(c.protected?" prot":"");
+    const d=new Date(c.ts);
+    const km = c.track&&c.track.length ? Math.max(...c.track.map(p=>p.spd||0)) : null;
+    el.innerHTML=`<div class="meta">
+        <div class="t tabnums">${d.toLocaleDateString("pt-BR")} ${d.toLocaleTimeString("pt-BR")}</div>
+        <div class="s tabnums">${fmtDur(c.dur)} • ${fmtMB(c.size/1_000_000)}${km!=null?" • máx "+km+" km/h":""}</div>
+      </div>
+      <div class="acts">
+        <button data-a="play">▶</button>
+        <button data-a="share">Salvar</button>
+        <button data-a="prot">${c.protected?"🔒":"🔓"}</button>
+        <button data-a="del">🗑</button>
+      </div>`;
+    el.querySelector('[data-a=play]').onclick=()=>{ const u=URL.createObjectURL(c.blob); window.open(u,"_blank"); };
+    el.querySelector('[data-a=share]').onclick=()=>shareClip(c);
+    el.querySelector('[data-a=prot]').onclick=async()=>{ c.protected=!c.protected; await putClip(c); renderClips(); };
+    el.querySelector('[data-a=del]').onclick=async()=>{ await delClip(c.id); renderClips(); refreshStore(); };
+    list.appendChild(el);
+  }
+}
+async function shareClip(c){
+  const ext = (c.type||"").includes("mp4")?"mp4":"webm";
+  const file=new File([c.blob], "rodacam-"+c.ts+"."+ext, {type:c.type||"video/mp4"});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:"RodaCam"}); return; }catch(e){ if(e.name==="AbortError") return; }
+  }
+  const u=URL.createObjectURL(c.blob); const a=document.createElement("a"); a.href=u; a.download=file.name; a.click();
+  toast("Baixando clipe…");
+}
+
+/* ============ boot ============ */
+$("#gateGo").onclick=async()=>{
+  $("#gateGo").disabled=true; $("#gateMsg").textContent="Pedindo permissões…";
+  try{
+    db=await openDB();
+    await startCamera();
+    startGPS();                                   // pede GPS (opcional; a câmera já basta)
+    $("#gate").classList.add("hide"); $("#view").classList.remove("hide");
+    bindSettings();
+    clockTimer=setInterval(tick,500); tick(); refreshStore();
+    if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+    toast("Pronto. Toque em Gravar.");
+  }catch(e){
+    $("#gateGo").disabled=false;
+    $("#gateMsg").textContent = (e&&e.name==="NotAllowedError")
+      ? "Permissão negada. Em Ajustes do iPhone → Safari → Câmera, permita o acesso e recarregue."
+      : "Não consegui abrir a câmera: "+(e&&e.message||e);
+  }
+};
+</script>
+</body>
+</html>
